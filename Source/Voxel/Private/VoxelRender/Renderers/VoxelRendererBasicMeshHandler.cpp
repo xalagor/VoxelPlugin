@@ -1,16 +1,16 @@
 // Copyright 2021 Phyronnaz
 
 #include "VoxelRendererBasicMeshHandler.h"
-#include "VoxelRender/VoxelRenderUtilities.h"
+#include "VoxelAsyncWork.h"
+#include "VoxelPool.h"
+#include "VoxelDebug/VoxelDebugManager.h"
 #include "VoxelRender/IVoxelRenderer.h"
-#include "VoxelRender/VoxelProceduralMeshComponent.h"
 #include "VoxelRender/VoxelChunkMaterials.h"
 #include "VoxelRender/VoxelChunkMesh.h"
+#include "VoxelRender/VoxelProceduralMeshComponent.h"
 #include "VoxelRender/VoxelProcMeshBuffers.h"
-#include "VoxelDebug/VoxelDebugManager.h"
+#include "VoxelRender/VoxelRenderUtilities.h"
 #include "VoxelUtilities/VoxelThreadingUtilities.h"
-#include "VoxelPool.h"
-#include "VoxelAsyncWork.h"
 
 #include "Async/Async.h"
 
@@ -49,16 +49,17 @@ private:
 		const TVoxelSharedRef<FThreadSafeCounter>& UpdateIndexPtr,
 		FVoxelChunkMeshesToBuild&& MeshesToBuild)
 		: FVoxelAsyncWork(STATIC_FNAME("FVoxelBasicMeshMergeWork"), EVoxelTaskType::MeshMerge, EPriority::Null, true)
-		, ChunkInfoRef(Ref)
-		, Position(Position)
-		, Settings(Handler.Renderer.Settings)
-		, Handler(StaticCastSharedRef<FVoxelRendererBasicMeshHandler>(Handler.AsShared()))
-		, MeshesToBuild(MoveTemp(MeshesToBuild))
-		, UpdateIndexPtr(UpdateIndexPtr)
-		, UpdateIndex(UpdateIndexPtr->GetValue())
+		  , ChunkInfoRef(Ref)
+		  , Position(Position)
+		  , Settings(Handler.Renderer.Settings)
+		  , Handler(StaticCastSharedRef<FVoxelRendererBasicMeshHandler>(Handler.AsShared()))
+		  , MeshesToBuild(MoveTemp(MeshesToBuild))
+		  , UpdateIndexPtr(UpdateIndexPtr)
+		  , UpdateIndex(UpdateIndexPtr->GetValue())
 	{
 	}
-	~FVoxelBasicMeshMergeWork() = default;
+
+	virtual ~FVoxelBasicMeshMergeWork() override = default;
 
 	virtual void DoWork() override
 	{
@@ -67,7 +68,8 @@ private:
 			// Canceled
 			return;
 		}
-		auto BuiltMeshes = FVoxelRenderUtilities::BuildMeshes_AnyThread(MeshesToBuild, Settings, Position, *UpdateIndexPtr, UpdateIndex);
+		auto BuiltMeshes = FVoxelRenderUtilities::BuildMeshes_AnyThread(MeshesToBuild, Settings, Position,
+		                                                                *UpdateIndexPtr, UpdateIndex);
 		if (!BuiltMeshes.IsValid())
 		{
 			// Canceled
@@ -86,7 +88,7 @@ FVoxelRendererBasicMeshHandler::~FVoxelRendererBasicMeshHandler()
 {
 	FlushBuiltDataQueue();
 	FlushActionQueue(MAX_dbl);
-	
+
 	ensure(ChunkInfos.Num() == 0);
 }
 
@@ -98,71 +100,74 @@ IVoxelRendererMeshHandler::FChunkId FVoxelRendererBasicMeshHandler::AddChunkImpl
 void FVoxelRendererBasicMeshHandler::ApplyAction(const FAction& Action)
 {
 	VOXEL_FUNCTION_COUNTER();
-	
+
 	switch (Action.Action)
 	{
 	case EAction::UpdateChunk:
-	{
-		check(Action.UpdateChunk().InitialCall.MainChunk);
-		const auto& MainChunk = *Action.UpdateChunk().InitialCall.MainChunk;
-		const auto* TransitionChunk = Action.UpdateChunk().InitialCall.TransitionChunk;
-
-		// This should never happen, as the chunk should be removed instead
-		ensure(!MainChunk.IsEmpty() || (TransitionChunk && !TransitionChunk->IsEmpty()));
-
-		auto& ChunkInfo = ChunkInfos[Action.ChunkId];
-		if (!ChunkInfo.Materials.IsValid())
 		{
-			ChunkInfo.Materials = MakeShared<FVoxelChunkMaterials>();
-		}
-		if (!ChunkInfo.UpdateIndex.IsValid())
-		{
-			ChunkInfo.UpdateIndex = MakeVoxelShared<FThreadSafeCounter>();
-		}
+			check(Action.UpdateChunk().InitialCall.MainChunk);
+			const auto& MainChunk = *Action.UpdateChunk().InitialCall.MainChunk;
+			const auto* TransitionChunk = Action.UpdateChunk().InitialCall.TransitionChunk;
 
-		// Cancel any previous build task
-		// Note: we do not clear the built data, as it could still be used
-		// The added cost of applying the update is probably worth it compared to stalling the entire queue waiting for an update
-		ChunkInfo.UpdateIndex->Increment();
-			
-		// Find the meshes to build (= copying mesh buffers to proc mesh buffers)
-		FVoxelChunkMeshesToBuild MeshesToBuild = FVoxelRenderUtilities::GetMeshesToBuild(
-			ChunkInfo.LOD,
-			ChunkInfo.Position,
-			Renderer,
-			Action.UpdateChunk().InitialCall.ChunkSettings,
-			*ChunkInfo.Materials,
-			MainChunk,
-			TransitionChunk,
-			ChunkInfo.DitheringInfo);
+			// This should never happen, as the chunk should be removed instead
+			ensure(!MainChunk.IsEmpty() || (TransitionChunk && !TransitionChunk->IsEmpty()));
 
-		// Start a task to asynchronously build them
-		auto* Task = FVoxelBasicMeshMergeWork::Create(*this, { Action.ChunkId, ChunkInfo.UniqueId }, MoveTemp(MeshesToBuild));
-		Renderer.GetSubsystemChecked<FVoxelPool>().QueueTask(Task);
+			auto& ChunkInfo = ChunkInfos[Action.ChunkId];
+			if (!ChunkInfo.Materials.IsValid())
+			{
+				ChunkInfo.Materials = MakeShared<FVoxelChunkMaterials>();
+			}
+			if (!ChunkInfo.UpdateIndex.IsValid())
+			{
+				ChunkInfo.UpdateIndex = MakeVoxelShared<FThreadSafeCounter>();
+			}
 
-		FAction NewAction;
-		NewAction.Action = EAction::UpdateChunk;
-		NewAction.ChunkId = Action.ChunkId;
-		NewAction.UpdateChunk().AfterCall.UpdateIndex = ChunkInfo.UpdateIndex->GetValue();
-		NewAction.UpdateChunk().AfterCall.DistanceFieldVolumeData = Action.UpdateChunk().InitialCall.MainChunk->GetDistanceFieldVolumeData();
-		ActionQueue.Enqueue(NewAction);
-			
-		if (Renderer.Settings.RenderType == EVoxelRenderType::SurfaceNets)
-		{
-			SetTransitionsMaskForSurfaceNets(Action.ChunkId, Action.UpdateChunk().InitialCall.ChunkSettings.TransitionsMask);
+			// Cancel any previous build task
+			// Note: we do not clear the built data, as it could still be used
+			// The added cost of applying the update is probably worth it compared to stalling the entire queue waiting for an update
+			ChunkInfo.UpdateIndex->Increment();
+
+			// Find the meshes to build (= copying mesh buffers to proc mesh buffers)
+			FVoxelChunkMeshesToBuild MeshesToBuild = GetMeshesToBuild(
+				ChunkInfo.LOD,
+				ChunkInfo.Position,
+				Renderer,
+				Action.UpdateChunk().InitialCall.ChunkSettings,
+				*ChunkInfo.Materials,
+				MainChunk,
+				TransitionChunk,
+				ChunkInfo.DitheringInfo);
+
+			// Start a task to asynchronously build them
+			auto* Task = FVoxelBasicMeshMergeWork::Create(*this, {Action.ChunkId, ChunkInfo.UniqueId},
+			                                              MoveTemp(MeshesToBuild));
+			Renderer.GetSubsystemChecked<FVoxelPool>().QueueTask(Task);
+
+			FAction NewAction;
+			NewAction.Action = EAction::UpdateChunk;
+			NewAction.ChunkId = Action.ChunkId;
+			NewAction.UpdateChunk().AfterCall.UpdateIndex = ChunkInfo.UpdateIndex->GetValue();
+			NewAction.UpdateChunk().AfterCall.DistanceFieldVolumeData = Action.UpdateChunk().InitialCall.MainChunk->
+			                                                                   GetDistanceFieldVolumeData();
+			ActionQueue.Enqueue(NewAction);
+
+			if (Renderer.Settings.RenderType == EVoxelRenderType::SurfaceNets)
+			{
+				SetTransitionsMaskForSurfaceNets(Action.ChunkId,
+				                                 Action.UpdateChunk().InitialCall.ChunkSettings.TransitionsMask);
+			}
+			break;
 		}
-		break;
-	}
 	case EAction::RemoveChunk:
 	case EAction::DitherChunk:
 	case EAction::ResetDithering:
 	case EAction::SetTransitionsMaskForSurfaceNets:
 	case EAction::HideChunk:
 	case EAction::ShowChunk:
-	{
-		ActionQueue.Enqueue(Action);
-		break;
-	}
+		{
+			ActionQueue.Enqueue(Action);
+			break;
+		}
 	default: ensure(false);
 	}
 }
@@ -201,7 +206,10 @@ void FVoxelRendererBasicMeshHandler::FlushBuiltDataQueue()
 	{
 		auto& BuiltData = Callback.BuiltData;
 
-		if (!ensure(BuiltData.BuiltMeshes.IsValid())) continue;
+		if (!ensure(BuiltData.BuiltMeshes.IsValid()))
+		{
+			continue;
+		}
 
 		auto* ChunkInfo = GetChunkInfo(Callback.ChunkInfoRef);
 		if (ChunkInfo && BuiltData.UpdateIndex >= ChunkInfo->UpdateIndex->GetValue())
@@ -216,13 +224,14 @@ void FVoxelRendererBasicMeshHandler::FlushBuiltDataQueue()
 void FVoxelRendererBasicMeshHandler::FlushActionQueue(double MaxTime)
 {
 	VOXEL_FUNCTION_COUNTER();
-	
+
 	FAction Action;
 	// Peek: if UpdateChunk isn't ready yet we don't want to pop the action
 	// Always process dithering in immediately, as else the chunk will be showed until the next tick and then hidden (one frame glitch)
-	while (ActionQueue.Peek(Action) && 
+	while (ActionQueue.Peek(Action) &&
 		(FPlatformTime::Seconds() < MaxTime ||
-		 (Action.Action == EAction::DitherChunk && Action.DitherChunk().DitheringType == EDitheringType::Classic_DitherIn)))
+			(Action.Action == EAction::DitherChunk && Action.DitherChunk().DitheringType ==
+				EDitheringType::Classic_DitherIn)))
 	{
 		auto& ChunkInfo = ChunkInfos[Action.ChunkId];
 		CleanUp(ChunkInfo.Meshes);
@@ -236,154 +245,169 @@ void FVoxelRendererBasicMeshHandler::FlushActionQueue(double MaxTime)
 		switch (Action.Action)
 		{
 		case EAction::UpdateChunk:
-		{
-			const int32 WantedUpdateIndex = Action.UpdateChunk().AfterCall.UpdateIndex;
-			if (ChunkInfo.MeshUpdateIndex >= WantedUpdateIndex)
 			{
-				// Already updated
-				// This happens when a previous UpdateChunk used the built data we triggered
+				const int32 WantedUpdateIndex = Action.UpdateChunk().AfterCall.UpdateIndex;
+				if (ChunkInfo.MeshUpdateIndex >= WantedUpdateIndex)
+				{
+					// Already updated
+					// This happens when a previous UpdateChunk used the built data we triggered
+					break;
+				}
+				if (WantedUpdateIndex > ChunkInfo.BuiltData.UpdateIndex)
+				{
+					// Not built yet, wait
+
+					if (ChunkInfo.BuiltData.UpdateIndex != -1)
+					{
+						// Stored built data is outdated, clear it to save memory
+						ensure(ChunkInfo.BuiltData.BuiltMeshes.IsValid());
+						ChunkInfo.BuiltData.BuiltMeshes.Reset();
+						ChunkInfo.BuiltData.UpdateIndex = -1;
+					}
+
+					return;
+				}
+
+				// Move to clear the built data value
+				const auto BuiltMeshes = MoveTemp(ChunkInfo.BuiltData.BuiltMeshes);
+				ChunkInfo.MeshUpdateIndex = ChunkInfo.BuiltData.UpdateIndex;
+				ChunkInfo.BuiltData.UpdateIndex = -1;
+
+				if (!ensure(BuiltMeshes.IsValid()))
+				{
+					continue;
+				}
+
+				int32 MeshIndex = 0;
+				// Apply built meshes
+				for (auto& BuiltMesh : *BuiltMeshes)
+				{
+					const FVoxelMeshConfig& MeshConfig = BuiltMesh.Key;
+					if (ChunkInfo.Meshes.Num() <= MeshIndex)
+					{
+						// Not enough meshes to render the built mesh, allocate new ones
+						auto* NewMesh = GetNewMesh(Action.ChunkId, ChunkInfo.Position, ChunkInfo.LOD);
+						if (!ensureVoxelSlow(NewMesh))
+						{
+							return;
+						}
+						ChunkInfo.Meshes.Add(NewMesh);
+					}
+
+					auto& Mesh = *ChunkInfo.Meshes[MeshIndex];
+					MeshConfig.ApplyTo(Mesh);
+
+					Mesh.SetDistanceFieldData(nullptr);
+					Mesh.SetReceivesDecals(MeshConfig.bReceivesDecals);
+					Mesh.ClearSections(EVoxelProcMeshSectionUpdate::DelayUpdate);
+					for (auto& Section : BuiltMesh.Value)
+					{
+						if (!ensure(Section.Value.IsValid()))
+						{
+							continue;
+						}
+						Mesh.AddProcMeshSection(Section.Key, MoveTemp(Section.Value),
+						                        EVoxelProcMeshSectionUpdate::DelayUpdate);
+					}
+					Mesh.FinishSectionsUpdates();
+
+					MeshIndex++;
+				}
+
+				// Clear unused meshes
+				for (; MeshIndex < ChunkInfo.Meshes.Num(); MeshIndex++)
+				{
+					auto& Mesh = *ChunkInfo.Meshes[MeshIndex];
+					Mesh.SetDistanceFieldData(nullptr);
+					Mesh.ClearSections(EVoxelProcMeshSectionUpdate::UpdateNow);
+				}
+
+				// Handle distance fields
+				const auto& DistanceFieldVolumeData = Action.UpdateChunk().AfterCall.DistanceFieldVolumeData;
+				if (DistanceFieldVolumeData.IsValid())
+				{
+					// Use the first mesh to hold the distance field data
+					// We should always have at least one mesh, else the chunk should have been removed instead of updated
+					if (ensure(ChunkInfo.Meshes.Num() > 0))
+					{
+						ChunkInfo.Meshes[0]->SetDistanceFieldData(DistanceFieldVolumeData);
+					}
+				}
 				break;
 			}
-			if (WantedUpdateIndex > ChunkInfo.BuiltData.UpdateIndex)
-			{
-				// Not built yet, wait
-
-				if (ChunkInfo.BuiltData.UpdateIndex != -1)
-				{
-					// Stored built data is outdated, clear it to save memory
-					ensure(ChunkInfo.BuiltData.BuiltMeshes.IsValid());
-					ChunkInfo.BuiltData.BuiltMeshes.Reset();
-					ChunkInfo.BuiltData.UpdateIndex = -1;
-				}
-
-				return;
-			}
-
-			// Move to clear the built data value
-			const auto BuiltMeshes = MoveTemp(ChunkInfo.BuiltData.BuiltMeshes);
-			ChunkInfo.MeshUpdateIndex = ChunkInfo.BuiltData.UpdateIndex;
-			ChunkInfo.BuiltData.UpdateIndex = -1;
-
-			if (!ensure(BuiltMeshes.IsValid())) continue;
-
-			int32 MeshIndex = 0;
-			// Apply built meshes
-			for (auto& BuiltMesh : *BuiltMeshes)
-			{
-				const FVoxelMeshConfig& MeshConfig = BuiltMesh.Key;
-				if (ChunkInfo.Meshes.Num() <= MeshIndex)
-				{
-					// Not enough meshes to render the built mesh, allocate new ones
-					auto* NewMesh = GetNewMesh(Action.ChunkId, ChunkInfo.Position, ChunkInfo.LOD);
-					if (!ensureVoxelSlow(NewMesh)) return;
-					ChunkInfo.Meshes.Add(NewMesh);
-				}
-
-				auto& Mesh = *ChunkInfo.Meshes[MeshIndex];
-				MeshConfig.ApplyTo(Mesh);
-
-				Mesh.SetDistanceFieldData(nullptr);
-				Mesh.ClearSections(EVoxelProcMeshSectionUpdate::DelayUpdate);
-				for (auto& Section : BuiltMesh.Value)
-				{
-					if (!ensure(Section.Value.IsValid())) continue;
-					Mesh.AddProcMeshSection(Section.Key, MoveTemp(Section.Value), EVoxelProcMeshSectionUpdate::DelayUpdate);
-				}
-				Mesh.FinishSectionsUpdates();
-
-				MeshIndex++;
-			}
-
-			// Clear unused meshes
-			for (; MeshIndex < ChunkInfo.Meshes.Num(); MeshIndex++)
-			{
-				auto& Mesh = *ChunkInfo.Meshes[MeshIndex];
-				Mesh.SetDistanceFieldData(nullptr);
-				Mesh.ClearSections(EVoxelProcMeshSectionUpdate::UpdateNow);
-			}
-
-			// Handle distance fields
-			const auto& DistanceFieldVolumeData = Action.UpdateChunk().AfterCall.DistanceFieldVolumeData;
-			if (DistanceFieldVolumeData.IsValid())
-			{
-				// Use the first mesh to hold the distance field data
-				// We should always have at least one mesh, else the chunk should have been removed instead of updated
-				if (ensure(ChunkInfo.Meshes.Num() > 0))
-				{
-					ChunkInfo.Meshes[0]->SetDistanceFieldData(DistanceFieldVolumeData);
-				}
-			}
-			break;
-		}
 		case EAction::RemoveChunk:
-		{
-			for (auto& Mesh : ChunkInfo.Meshes)
 			{
-				RemoveMesh(*Mesh);
+				for (auto& Mesh : ChunkInfo.Meshes)
+				{
+					RemoveMesh(*Mesh);
+				}
+				ChunkInfos.RemoveAt(Action.ChunkId);
+				break;
 			}
-			ChunkInfos.RemoveAt(Action.ChunkId);
-			break;
-		}
 		case EAction::DitherChunk:
-		{
-			ChunkInfo.DitheringInfo.bIsValid = true;
-			ChunkInfo.DitheringInfo.DitheringType = Action.DitherChunk().DitheringType;
-			ChunkInfo.DitheringInfo.Time = FVoxelRenderUtilities::GetWorldCurrentTime(Renderer.Settings.World.Get());
-			for (auto& Mesh : ChunkInfo.Meshes)
 			{
-				FVoxelRenderUtilities::StartMeshDithering(
-					*Mesh,
-					Renderer.Settings,
-					ChunkInfo.DitheringInfo);
+				ChunkInfo.DitheringInfo.bIsValid = true;
+				ChunkInfo.DitheringInfo.DitheringType = Action.DitherChunk().DitheringType;
+				ChunkInfo.DitheringInfo.Time =
+					FVoxelRenderUtilities::GetWorldCurrentTime(Renderer.Settings.World.Get());
+				for (auto& Mesh : ChunkInfo.Meshes)
+				{
+					StartMeshDithering(
+						*Mesh,
+						Renderer.Settings,
+						ChunkInfo.DitheringInfo);
+				}
+				break;
 			}
-			break;
-		}
 		case EAction::ResetDithering:
-		{
-			ChunkInfo.DitheringInfo.bIsValid = false;
-			for (auto& Mesh : ChunkInfo.Meshes)
 			{
-				FVoxelRenderUtilities::ResetDithering(*Mesh, Renderer.Settings);
+				ChunkInfo.DitheringInfo.bIsValid = false;
+				for (auto& Mesh : ChunkInfo.Meshes)
+				{
+					FVoxelRenderUtilities::ResetDithering(*Mesh, Renderer.Settings);
+				}
+				break;
 			}
-			break;
-		}
 		case EAction::SetTransitionsMaskForSurfaceNets:
-		{
-			for (auto& Mesh : ChunkInfo.Meshes)
 			{
-				FVoxelRenderUtilities::SetMeshTransitionsMask(*Mesh, Action.SetTransitionsMaskForSurfaceNets().TransitionsMask);
+				for (auto& Mesh : ChunkInfo.Meshes)
+				{
+					FVoxelRenderUtilities::SetMeshTransitionsMask(
+						*Mesh, Action.SetTransitionsMaskForSurfaceNets().TransitionsMask);
+				}
+				break;
 			}
-			break;
-		}
 		case EAction::HideChunk:
-		{
-			for (auto& Mesh : ChunkInfo.Meshes)
 			{
-				FVoxelRenderUtilities::HideMesh(*Mesh);
+				for (auto& Mesh : ChunkInfo.Meshes)
+				{
+					FVoxelRenderUtilities::HideMesh(*Mesh);
+				}
+				break;
 			}
-			break;
-		}
 		case EAction::ShowChunk:
-		{
-			for (auto& Mesh : ChunkInfo.Meshes)
 			{
-				FVoxelRenderUtilities::ShowMesh(*Mesh);
+				for (auto& Mesh : ChunkInfo.Meshes)
+				{
+					FVoxelRenderUtilities::ShowMesh(*Mesh);
+				}
+				break;
 			}
-			break;
-		}
 		default: ensure(false);
 		}
 
 		if (CVarLogActionQueue.GetValueOnGameThread() != 0)
 		{
-			LOG_VOXEL(Log, TEXT("ActionQueue: LOD: %d; %s; Position: %s"), ChunkInfo.LOD, *Action.ToString(), *ChunkInfo.Position.ToString());
+			LOG_VOXEL(Log, TEXT("ActionQueue: LOD: %d; %s; Position: %s"), ChunkInfo.LOD, *Action.ToString(),
+			          *ChunkInfo.Position.ToString());
 		}
 
 		ActionQueue.Pop();
 	}
 }
 
-void FVoxelRendererBasicMeshHandler::MeshMergeCallback(FChunkInfoRef ChunkInfoRef, int32 UpdateIndex, TUniquePtr<FVoxelBuiltChunkMeshes> BuiltMeshes)
+void FVoxelRendererBasicMeshHandler::MeshMergeCallback(FChunkInfoRef ChunkInfoRef, int32 UpdateIndex,
+                                                       TUniquePtr<FVoxelBuiltChunkMeshes> BuiltMeshes)
 {
-	CallbackQueue.Enqueue({ ChunkInfoRef, FChunkBuiltData{ UpdateIndex,  MoveTemp(BuiltMeshes) } });
+	CallbackQueue.Enqueue({ChunkInfoRef, FChunkBuiltData{UpdateIndex, MoveTemp(BuiltMeshes)}});
 }

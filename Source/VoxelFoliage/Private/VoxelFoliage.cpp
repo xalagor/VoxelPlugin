@@ -1,8 +1,8 @@
 // Copyright 2021 Phyronnaz
 
 #include "VoxelFoliage.h"
-#include "VoxelTools/VoxelBlueprintLibrary.h"
 #include "Engine/StaticMesh.h"
+#include "VoxelTools/VoxelBlueprintLibrary.h"
 
 void UVoxelFoliage::PostDuplicate(bool bDuplicateForPIE)
 {
@@ -19,7 +19,7 @@ void UVoxelFoliage::PreEditChange(FProperty* PropertyAboutToChange)
 {
 	Super::PreEditChange(PropertyAboutToChange);
 
-	if (PropertyAboutToChange && 
+	if (PropertyAboutToChange &&
 		PropertyAboutToChange->GetFName() == "Mesh")
 	{
 		for (FVoxelFoliageMesh& Mesh : Meshes)
@@ -28,13 +28,13 @@ void UVoxelFoliage::PreEditChange(FProperty* PropertyAboutToChange)
 			{
 				continue;
 			}
-			
-			const TArray<FStaticMaterial>& StaticMaterials = Mesh.Mesh->UE_5_SWITCH(StaticMaterials, GetStaticMaterials());
+
+			const TArray<FStaticMaterial>& StaticMaterials = Mesh.Mesh->GetStaticMaterials();
 			if (StaticMaterials.Num() < Mesh.Materials.Num())
 			{
 				continue;
 			}
-		
+
 			bool bNoChange = true;
 			for (int32 Index = 0; Index < Mesh.Materials.Num(); Index++)
 			{
@@ -65,8 +65,8 @@ void UVoxelFoliage::PostEditChangeProperty(FPropertyChangedEvent& PropertyChange
 			{
 				continue;
 			}
-			
-			const TArray<FStaticMaterial>& StaticMaterials = Mesh.Mesh->UE_5_SWITCH(StaticMaterials, GetStaticMaterials());
+
+			const TArray<FStaticMaterial>& StaticMaterials = Mesh.Mesh->GetStaticMaterials();
 			if (Mesh.Materials.Num() < StaticMaterials.Num())
 			{
 				Mesh.Materials.SetNum(StaticMaterials.Num());

@@ -2,10 +2,10 @@
 
 #include "VoxelWorld.h"
 
-#include "VoxelPool.h"
-#include "VoxelMessages.h"
-#include "VoxelSettings.h"
 #include "VoxelEditorDelegates.h"
+#include "VoxelMessages.h"
+#include "VoxelPool.h"
+#include "VoxelSettings.h"
 #include "VoxelWorldRootComponent.h"
 
 #include "VoxelComponents/VoxelInvokerComponent.h"
@@ -23,32 +23,32 @@
 #include "VoxelPlaceableItems/Actors/VoxelPlaceableItemActor.h"
 #include "VoxelPlaceableItems/Actors/VoxelPlaceableItemActorHelper.h"
 
-#include "VoxelRender/IVoxelRenderer.h"
 #include "VoxelRender/IVoxelLODManager.h"
-#include "VoxelRender/VoxelTexturePool.h"
+#include "VoxelRender/IVoxelRenderer.h"
 #include "VoxelRender/VoxelProceduralMeshComponent.h"
+#include "VoxelRender/VoxelTexturePool.h"
 #include "VoxelRender/MaterialCollections/VoxelInstancedMaterialCollection.h"
 #include "VoxelRender/MaterialCollections/VoxelMaterialCollectionBase.h"
 
 #include "VoxelFoliageInterface.h"
 
+#include "VoxelTools/VoxelBlueprintLibrary.h"
 #include "VoxelTools/VoxelDataTools.h"
 #include "VoxelTools/VoxelToolHelpers.h"
-#include "VoxelTools/VoxelBlueprintLibrary.h"
 
 #include "EngineUtils.h"
 #include "TimerManager.h"
-#include "Widgets/Notifications/SNotificationList.h"
+#include "Components/BillboardComponent.h"
+#include "Components/HierarchicalInstancedStaticMeshComponent.h"
 #include "Framework/Notifications/NotificationManager.h"
+#include "HAL/PlatformFilemanager.h"
+#include "Materials/Material.h"
+#include "Materials/MaterialInterface.h"
 #include "Misc/FileHelper.h"
 #include "Misc/MessageDialog.h"
 #include "Serialization/BufferArchive.h"
 #include "UObject/ConstructorHelpers.h"
-#include "HAL/PlatformFilemanager.h"
-#include "Materials/Material.h"
-#include "Materials/MaterialInterface.h"
-#include "Components/BillboardComponent.h"
-#include "Components/HierarchicalInstancedStaticMeshComponent.h"
+#include "Widgets/Notifications/SNotificationList.h"
 
 void AVoxelWorld::FGameThreadTasks::Flush()
 {
@@ -69,13 +69,13 @@ void AVoxelWorld::FGameThreadTasks::Flush()
 AVoxelWorld::AVoxelWorld()
 {
 	MultiplayerInterface = UVoxelMultiplayerTcpInterface::StaticClass();
-	
+
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.bHighPriority = true;
 
 	WorldRoot = CreateDefaultSubobject<UVoxelWorldRootComponent>("Root");
 	LineBatchComponent = CreateDefaultSubobject<UVoxelLineBatchComponent>("LineBatchComponent");
-	
+
 	RootComponent = WorldRoot;
 
 #if WITH_EDITOR
@@ -90,7 +90,7 @@ AVoxelWorld::AVoxelWorld()
 		SpriteComponent->SpriteInfo.Category = TEXT("Voxel World");
 		SpriteComponent->SpriteInfo.DisplayName = FText::FromString("Voxel World");
 		SpriteComponent->SetupAttachment(RootComponent);
-		SpriteComponent->bReceivesDecals = false;
+		SpriteComponent->SetReceivesDecals(false);
 	}
 
 	// Automatically refresh material on property change/material recompile
@@ -122,7 +122,7 @@ AVoxelWorld::AVoxelWorld()
 		}
 		else
 		{
-			if (MaterialCollection && 
+			if (MaterialCollection &&
 				MaterialCollection->GetMaterialIndex(Material->GetFName()) != -1)
 			{
 				bUsed = true;
@@ -131,7 +131,7 @@ AVoxelWorld::AVoxelWorld()
 			{
 				for (auto& LODMaterialCollection : LODMaterialCollections)
 				{
-					if (LODMaterialCollection.MaterialCollection && 
+					if (LODMaterialCollection.MaterialCollection &&
 						LODMaterialCollection.MaterialCollection->GetMaterialIndex(Material->GetFName()) != -1)
 					{
 						bUsed = true;
@@ -154,7 +154,7 @@ AVoxelWorld::AVoxelWorld()
 		{
 			return;
 		}
-		
+
 		RefreshMaterial(Cast<UMaterialInterface>(Object));
 
 		if (MaterialConfig != EVoxelMaterialConfig::RGB && Object->IsA<UVoxelMaterialCollectionBase>())
@@ -188,8 +188,9 @@ AVoxelWorld::AVoxelWorld()
 			{
 				UVoxelBlueprintLibrary::ApplyNewMaterials(this);
 
-				if (PropertyChangedEvent.MemberProperty && 
-					PropertyChangedEvent.MemberProperty->GetFName() == GET_MEMBER_NAME_STATIC(UVoxelInstancedMaterialCollection, MaxMaterialsToBlendAtOnce))
+				if (PropertyChangedEvent.MemberProperty &&
+					PropertyChangedEvent.MemberProperty->GetFName() == GET_MEMBER_NAME_STATIC(
+						UVoxelInstancedMaterialCollection, MaxMaterialsToBlendAtOnce))
 				{
 					// Need to recompute the chunks if MaxMaterialsToBlendAtOnce changed, as they are built with the wrong number of indices
 					UVoxelBlueprintLibrary::UpdateAll(this);
@@ -197,26 +198,27 @@ AVoxelWorld::AVoxelWorld()
 			}
 		}
 	};
-	
+
 	const auto TryRefreshFoliage = [=](UObject* Object, FPropertyChangedEvent& PropertyChangedEvent)
 	{
 	};
-		
-	FCoreUObjectDelegates::OnObjectPropertyChanged.AddWeakLambda(this, [=](UObject* Object, FPropertyChangedEvent& PropertyChangedEvent)
-	{
-		if (PropertyChangedEvent.ChangeType == EPropertyChangeType::Interactive)
-		{
-			return;
-		}
-		
-		if (!Object || !IsCreated())
-		{
-			return;
-		}
 
-		TryRefreshMaterials(Object, PropertyChangedEvent);
-		TryRefreshFoliage(Object, PropertyChangedEvent);
-	});
+	FCoreUObjectDelegates::OnObjectPropertyChanged.AddWeakLambda(
+		this, [=](UObject* Object, FPropertyChangedEvent& PropertyChangedEvent)
+		{
+			if (PropertyChangedEvent.ChangeType == EPropertyChangeType::Interactive)
+			{
+				return;
+			}
+
+			if (!Object || !IsCreated())
+			{
+				return;
+			}
+
+			TryRefreshMaterials(Object, PropertyChangedEvent);
+			TryRefreshFoliage(Object, PropertyChangedEvent);
+		});
 
 	FVoxelEditorDelegates::OnVoxelGraphUpdated.AddWeakLambda(this, [=](UVoxelGenerator* Object)
 	{
@@ -224,7 +226,7 @@ AVoxelWorld::AVoxelWorld()
 		{
 			return;
 		}
-		
+
 		FPropertyChangedEvent PropertyChangedEvent(nullptr);
 		TryRefreshFoliage(Object, PropertyChangedEvent);
 	});
@@ -238,7 +240,7 @@ AVoxelWorld::AVoxelWorld()
 void AVoxelWorld::CreateWorld(FVoxelWorldCreateInfo Info)
 {
 	VOXEL_FUNCTION_COUNTER();
-	
+
 	if (IsCreated())
 	{
 		FVoxelMessages::Error("Can't create world: already created");
@@ -255,17 +257,18 @@ void AVoxelWorld::CreateWorld(FVoxelWorldCreateInfo Info)
 		return;
 	}
 #endif
-	
+
 	PlayType = EVoxelPlayType::Game;
 	CreateWorldInternal(Info);
 	if (bUseCameraIfNoInvokersFound && UVoxelInvokerComponentBase::GetInvokers(this).Num() == 0)
 	{
 		const auto NetMode = GetWorld()->GetNetMode();
-		if (NetMode != ENetMode::NM_Standalone)
+		if (NetMode != NM_Standalone)
 		{
-			if (NetMode != ENetMode::NM_DedicatedServer) // Not spawned yet
+			if (NetMode != NM_DedicatedServer) // Not spawned yet
 			{
-				FVoxelMessages::Warning("Voxel World: Can't use camera as invoker in multiplayer! You need to add a VoxelInvokerComponent to your character");
+				FVoxelMessages::Warning(
+					"Voxel World: Can't use camera as invoker in multiplayer! You need to add a VoxelInvokerComponent to your character");
 			}
 		}
 		else
@@ -282,7 +285,7 @@ void AVoxelWorld::CreateWorld(FVoxelWorldCreateInfo Info)
 void AVoxelWorld::DestroyWorld()
 {
 	VOXEL_FUNCTION_COUNTER();
-	
+
 	if (!IsCreated())
 	{
 		FVoxelMessages::Error("Can't destroy world: not created");
@@ -300,7 +303,8 @@ void AVoxelWorld::DestroyWorld()
 
 FVoxelIntBox AVoxelWorld::GetWorldBounds() const
 {
-	return FVoxelRuntimeSettings::GetWorldBounds(bUseCustomWorldBounds, CustomWorldBounds, RenderOctreeChunkSize, RenderOctreeDepth);
+	return FVoxelRuntimeSettings::GetWorldBounds(bUseCustomWorldBounds, CustomWorldBounds, RenderOctreeChunkSize,
+	                                             RenderOctreeDepth);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -319,8 +323,8 @@ void AVoxelWorld::SetGeneratorClass(TSubclassOf<UVoxelGenerator> NewGeneratorCla
 
 void AVoxelWorld::SetRenderOctreeDepth(int32 NewDepth)
 {
-	FVoxelUtilities::FixupChunkSize(RenderOctreeChunkSize,  MESHER_CHUNK_SIZE);
-	
+	FVoxelUtilities::FixupChunkSize(RenderOctreeChunkSize, MESHER_CHUNK_SIZE);
+
 	RenderOctreeDepth = FMath::Max(1, FVoxelUtilities::ClampDepth(RenderOctreeChunkSize, NewDepth));
 	WorldSizeInVoxel = FVoxelUtilities::GetSizeFromDepth(RenderOctreeChunkSize, RenderOctreeDepth);
 }
@@ -329,7 +333,7 @@ void AVoxelWorld::SetRenderOctreeChunkSize(int32 NewChunkSize)
 {
 	RenderOctreeChunkSize = NewChunkSize;
 	RenderOctreeChunkSize = FMath::Min(WorldSizeInVoxel / 2, RenderOctreeChunkSize);
-	FVoxelUtilities::FixupChunkSize(RenderOctreeChunkSize,  MESHER_CHUNK_SIZE);
+	FVoxelUtilities::FixupChunkSize(RenderOctreeChunkSize, MESHER_CHUNK_SIZE);
 
 	// Update depth
 	SetWorldSize(WorldSizeInVoxel);
@@ -337,8 +341,8 @@ void AVoxelWorld::SetRenderOctreeChunkSize(int32 NewChunkSize)
 
 void AVoxelWorld::SetWorldSize(int32 NewWorldSizeInVoxel)
 {
-	FVoxelUtilities::FixupChunkSize(RenderOctreeChunkSize,  MESHER_CHUNK_SIZE);
-	
+	FVoxelUtilities::FixupChunkSize(RenderOctreeChunkSize, MESHER_CHUNK_SIZE);
+
 	WorldSizeInVoxel = FMath::Max(0, NewWorldSizeInVoxel);
 	SetRenderOctreeDepth(FVoxelUtilities::GetDepthFromSize(RenderOctreeChunkSize, NewWorldSizeInVoxel));
 }
@@ -355,7 +359,7 @@ TArray<FIntVector> AVoxelWorld::GetNeighboringPositions(const FVector& GlobalPos
 UVoxelGeneratorCache* AVoxelWorld::GetGeneratorCache() const
 {
 	CHECK_VOXELWORLD_IS_CREATED_IMPL(this, nullptr);
-	
+
 	if (!GeneratorCache)
 	{
 		GeneratorCache = NewObject<UVoxelGeneratorCache>();
@@ -374,7 +378,7 @@ FVoxelGeneratorInit AVoxelWorld::GetGeneratorInit() const
 
 	int32 ChunkSize = RenderOctreeChunkSize;
 	FVoxelUtilities::FixupChunkSize(ChunkSize, MESHER_CHUNK_SIZE);
-	
+
 	return FVoxelGeneratorInit(
 		VoxelSize,
 		FVoxelUtilities::GetSizeFromDepth(ChunkSize, RenderOctreeDepth),
@@ -420,7 +424,7 @@ void AVoxelWorld::SetCollisionResponseToChannel(ECollisionChannel Channel, EColl
 void AVoxelWorld::BeginPlay()
 {
 	VOXEL_FUNCTION_COUNTER();
-	
+
 	Super::BeginPlay();
 
 	UpdateCollisionProfile();
@@ -436,7 +440,7 @@ void AVoxelWorld::BeginPlay()
 void AVoxelWorld::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	VOXEL_FUNCTION_COUNTER();
-	
+
 	Super::EndPlay(EndPlayReason);
 
 	if (IsCreated())
@@ -449,7 +453,8 @@ void AVoxelWorld::Tick(float DeltaTime)
 {
 	VOXEL_FUNCTION_COUNTER();
 
-	if (GetWorld()->WorldType != EWorldType::Editor && GetWorld()->WorldType != EWorldType::EditorPreview) // We don't want to tick the BP in preview
+	if (GetWorld()->WorldType != EWorldType::Editor && GetWorld()->WorldType != EWorldType::EditorPreview)
+	// We don't want to tick the BP in preview
 	{
 		Super::Tick(DeltaTime);
 	}
@@ -462,7 +467,7 @@ void AVoxelWorld::Tick(float DeltaTime)
 			LastTransform = NewTransform;
 			UVoxelBlueprintLibrary::RecomputeComponentPositions(this);
 		}
-		
+
 		if (bRegenerateFoliageOnNextFrame)
 		{
 			UVoxelBlueprintLibrary::RecreateSpawners(this);
@@ -545,7 +550,7 @@ void AVoxelWorld::Serialize(FArchive& Ar)
 void AVoxelWorld::PostLoad()
 {
 	Super::PostLoad();
-	
+
 	if (!ProcMeshClass)
 	{
 		ProcMeshClass = UVoxelProceduralMeshComponent::StaticClass();
@@ -556,7 +561,7 @@ void AVoxelWorld::PostLoad()
 
 	SetRenderOctreeDepth(RenderOctreeDepth);
 
-	if (int32(UVConfig) >= int32(EVoxelUVConfig::Max))
+	if (static_cast<int32>(UVConfig) >= static_cast<int32>(EVoxelUVConfig::Max))
 	{
 		UVConfig = EVoxelUVConfig::GlobalUVs;
 	}
@@ -564,9 +569,10 @@ void AVoxelWorld::PostLoad()
 	if (NumberOfThreads_DEPRECATED != 0)
 	{
 		FVoxelMessages::Warning(FString::Printf(
-			TEXT(
-				"NumberOfThreads is now set globally in the project settings instead of per voxel world. "
-				"The value on the voxel world (%d) will be ignored."), NumberOfThreads_DEPRECATED), this);
+			                        TEXT(
+				                        "NumberOfThreads is now set globally in the project settings instead of per voxel world. "
+				                        "The value on the voxel world (%d) will be ignored."),
+			                        NumberOfThreads_DEPRECATED), this);
 	}
 	if (SpawnerConfig_DEPRECATED)
 	{
@@ -584,7 +590,7 @@ void AVoxelWorld::PreEditChange(FProperty* PropertyThatWillChange)
 }
 
 void AVoxelWorld::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
-{	
+{
 	if (!ProcMeshClass)
 	{
 		ProcMeshClass = UVoxelProceduralMeshComponent::StaticClass();
@@ -616,7 +622,7 @@ void AVoxelWorld::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedE
 			}
 		}
 	}
-	
+
 	if (auto* Property = PropertyChangedEvent.MemberProperty)
 	{
 		const FName Name = Property->GetFName();
@@ -646,7 +652,10 @@ void AVoxelWorld::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedE
 				}
 				It.Value = FMath::Max(It.Value, 0.f);
 			}
-			MaterialsHardness.KeySort([](const FString& A, const FString& B) { return TCString<TCHAR>::Atoi(*A) < TCString<TCHAR>::Atoi(*B); });
+			MaterialsHardness.KeySort([](const FString& A, const FString& B)
+			{
+				return TCString<TCHAR>::Atoi(*A) < TCString<TCHAR>::Atoi(*B);
+			});
 		}
 		else if (Name == GET_MEMBER_NAME_STATIC(AVoxelWorld, FoliageCollisionDistanceInVoxel))
 		{
@@ -670,8 +679,9 @@ void AVoxelWorld::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedE
 			{
 				const auto Result = FMessageDialog::Open(
 					EAppMsgType::YesNo,
-					VOXEL_LOCTEXT("Changing the material config with existing material data! Do you want to clear that data (recommended)?"));
-				
+					VOXEL_LOCTEXT(
+						"Changing the material config with existing material data! Do you want to clear that data (recommended)?"));
+
 				if (Result == EAppReturnType::Yes)
 				{
 					UVoxelBlueprintLibrary::ClearMaterialData(this);
@@ -681,11 +691,11 @@ void AVoxelWorld::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedE
 		}
 
 		OnPropertyChanged_Interactive.Broadcast();
-		
+
 		if (IsCreated() && PropertyChangedEvent.ChangeType != EPropertyChangeType::Interactive)
 		{
 			OnPropertyChanged.Broadcast();
-			
+
 			if (Property->HasMetaData("Recreate"))
 			{
 				UVoxelBlueprintLibrary::Recreate(this, true);
@@ -715,7 +725,7 @@ void AVoxelWorld::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedE
 			}
 		}
 	}
-	
+
 	if (bUseCustomWorldBounds)
 	{
 		CustomWorldBounds = GetWorldBounds();
@@ -771,14 +781,17 @@ void AVoxelWorld::CreateWorldInternal(const FVoxelWorldCreateInfo& Info)
 
 	// Setup root
 	ApplyCollisionSettingsToRoot();
-	
-	if (PlayType == EVoxelPlayType::Game && WorldRoot->BodyInstance.bSimulatePhysics && CollisionTraceFlag == ECollisionTraceFlag::CTF_UseComplexAsSimple)
+
+	if (PlayType == EVoxelPlayType::Game && WorldRoot->BodyInstance.bSimulatePhysics && CollisionTraceFlag ==
+		CTF_UseComplexAsSimple)
 	{
-		FVoxelMessages::Error("Simulate physics requires using Simple collisions (either 'Simple And Complex' or 'Use Simple Collision As Complex')", this);
+		FVoxelMessages::Error(
+			"Simulate physics requires using Simple collisions (either 'Simple And Complex' or 'Use Simple Collision As Complex')",
+			this);
 	}
 	bSimulatePhysicsOnceLoaded = WorldRoot->BodyInstance.bSimulatePhysics;
 	WorldRoot->BodyInstance.bSimulatePhysics = false;
-	
+
 	GetLineBatchComponent().Flush();
 
 	ensure(!GameThreadTasks);
@@ -786,7 +799,7 @@ void AVoxelWorld::CreateWorldInternal(const FVoxelWorldCreateInfo& Info)
 
 	{
 		FVoxelRuntimeSettings RuntimeSettings = GetRuntimeSettings();
-		
+
 		if (Info.bOverrideData)
 		{
 			ensure(!(Info.DataOverride && Info.DataOverride_Raw));
@@ -798,7 +811,8 @@ void AVoxelWorld::CreateWorldInternal(const FVoxelWorldCreateInfo& Info)
 				}
 				else
 				{
-					FVoxelMessages::Warning(FUNCTION_ERROR("Info.DataOverride is not created! Can't copy data from it."), this);
+					FVoxelMessages::Warning(
+						FUNCTION_ERROR("Info.DataOverride is not created! Can't copy data from it."), this);
 				}
 			}
 			else if (Info.DataOverride_Raw)
@@ -820,14 +834,14 @@ void AVoxelWorld::CreateWorldInternal(const FVoxelWorldCreateInfo& Info)
 	{
 		Runtime->DynamicSettings->ConfigurePreview();
 	}
-	
+
 	FVoxelRuntimeData& RuntimeData = *Runtime->RuntimeData;
 	RuntimeData.OnWorldLoaded.AddUObject(this, &AVoxelWorld::OnWorldLoadedCallback);
 	RuntimeData.OnMaxFoliageInstancesReached.AddWeakLambda(this, [this]()
 	{
 		OnMaxFoliageInstancesReached.Broadcast();
 	});
-	
+
 	if (FoliageCollections.Num() > 0)
 	{
 		FVoxelMessages::Info("FoliageCollections are only available in Voxel Plugin Pro", this);
@@ -922,7 +936,7 @@ void AVoxelWorld::DestroyWorldInternal()
 		// Reset to avoid keeping instances alive
 		PlaceableItemManager->ResetGeneratorCache();
 	}
-	
+
 	if (PlaceableItemActorHelper)
 	{
 		PlaceableItemActorHelper->MarkPendingKill();
@@ -945,7 +959,8 @@ void AVoxelWorld::DestroyVoxelComponents()
 	auto Components = GetComponents(); // need a copy as we are modifying it when destroying comps
 	for (auto& Component : Components)
 	{
-		if (IsValid(Component) && Component->HasAnyFlags(RF_Transient) && (Component->IsA<UVoxelProceduralMeshComponent>() || Component->IsA<UHierarchicalInstancedStaticMeshComponent>()))
+		if (IsValid(Component) && Component->HasAnyFlags(RF_Transient) && (Component->IsA<
+			UVoxelProceduralMeshComponent>() || Component->IsA<UHierarchicalInstancedStaticMeshComponent>()))
 		{
 			Component->DestroyComponent();
 		}
@@ -963,10 +978,10 @@ void AVoxelWorld::LoadFromSaveObject()
 		// Not saved yet
 		return;
 	}
-	
+
 	FVoxelUncompressedWorldSave Save;
 	UVoxelSaveUtilities::DecompressVoxelSave(SaveObject->Save, Save);
-	
+
 	if (Save.Const().GetDepth() == -1)
 	{
 		FVoxelMessages::Error("Invalid Save Object!", this);
@@ -974,14 +989,18 @@ void AVoxelWorld::LoadFromSaveObject()
 	}
 	if (Save.Const().GetDepth() > GetSubsystemChecked<FVoxelData>().Depth)
 	{
-		LOG_VOXEL(Warning, TEXT("Save Object depth is bigger than world depth, the save data outside world bounds will be ignored"));
+		LOG_VOXEL(Warning,
+		          TEXT(
+			          "Save Object depth is bigger than world depth, the save data outside world bounds will be ignored"
+		          ));
 	}
 
 	if (!UVoxelDataTools::LoadFromSave(this, Save))
 	{
 		const auto Result = FMessageDialog::Open(
 			EAppMsgType::YesNoCancel,
-			VOXEL_LOCTEXT("Some errors occured when loading from the save object. Do you want to continue? This might corrupt the save object"));
+			VOXEL_LOCTEXT(
+				"Some errors occured when loading from the save object. Do you want to continue? This might corrupt the save object"));
 
 		if (Result != EAppReturnType::Yes)
 		{
@@ -1014,7 +1033,7 @@ void AVoxelWorld::ApplyPlaceableItems()
 		}
 		PlaceableItemActors.Add(Actor);
 	}
-	
+
 	TGuardValue<bool> AllowScriptsInEditor(GAllowActorScriptExecutionInEditor, true);
 
 	TMap<AVoxelPlaceableItemActor*, int32> Priorities;
@@ -1033,7 +1052,7 @@ void AVoxelWorld::ApplyPlaceableItems()
 void AVoxelWorld::ApplyCollisionSettingsToRoot() const
 {
 	VOXEL_FUNCTION_COUNTER();
-	
+
 	WorldRoot->CollisionTraceFlag = CollisionTraceFlag;
 	WorldRoot->CanCharacterStepUpOn = CanCharacterStepUpOn;
 	WorldRoot->SetGenerateOverlapEvents(bGenerateOverlapEvents);
@@ -1054,8 +1073,9 @@ void AVoxelWorld::RecreateRender()
 
 	Runtime->DynamicSettings->SetFromRuntime(*this);
 
-	Runtime->RecreateSubsystems(EVoxelSubsystemFlags::RecreateRender | EVoxelSubsystemFlags::RecreateFoliage, GetRuntimeSettings());
-	
+	Runtime->RecreateSubsystems(EVoxelSubsystemFlags::RecreateRender | EVoxelSubsystemFlags::RecreateFoliage,
+	                            GetRuntimeSettings());
+
 	DestroyVoxelComponents();
 	DebugTextures.Reset();
 }
@@ -1158,15 +1178,16 @@ void AVoxelWorld::SaveData()
 		{
 			const EAppReturnType::Type Result = FMessageDialog::Open(
 				EAppMsgType::YesNo,
-				VOXEL_LOCTEXT("The voxel world Save Object is null. You need to create one now if you don't want to lose your changes.\n\nSave changes?"));
-			
+				VOXEL_LOCTEXT(
+					"The voxel world Save Object is null. You need to create one now if you don't want to lose your changes.\n\nSave changes?"));
+
 			if (Result == EAppReturnType::No)
 			{
 				// Clear dirty flag so we don't get more annoying popups
 				GetSubsystemChecked<FVoxelData>().ClearDirtyFlag();
 				return;
 			}
-			
+
 			Modify();
 			SaveObject = IVoxelWorldEditor::GetVoxelWorldEditor()->CreateSaveObject();
 		}
@@ -1184,11 +1205,11 @@ void AVoxelWorld::SaveData()
 
 				Progress.EnterProgressFrame(1.f, VOXEL_LOCTEXT("Creating save"));
 				UVoxelDataTools::GetSave(this, Save);
-				
+
 				Progress.EnterProgressFrame(1.f, VOXEL_LOCTEXT("Compressing save"));
 				UVoxelSaveUtilities::CompressVoxelSave(Save, SaveObject->Save);
 			}
-			
+
 			SaveObject->CopyDepthFromSave();
 			SaveObject->MarkPackageDirty();
 
@@ -1220,7 +1241,9 @@ inline bool CanLoad(const FVoxelData& Data)
 {
 	if (Data.IsDirty())
 	{
-		const auto Result = FMessageDialog::Open(EAppMsgType::YesNoCancel, VOXEL_LOCTEXT("There are unsaved changes. Loading will overwrite them. Confirm?"));
+		const auto Result = FMessageDialog::Open(EAppMsgType::YesNoCancel,
+		                                         VOXEL_LOCTEXT(
+			                                         "There are unsaved changes. Loading will overwrite them. Confirm?"));
 		if (Result != EAppReturnType::Yes)
 		{
 			return false;
@@ -1255,7 +1278,7 @@ bool AVoxelWorld::SaveToFile(const FString& Path, FText& Error)
 		Error = VOXEL_LOCTEXT("Empty Save File Path");
 		return false;
 	}
-	else if (!FPaths::ValidatePath(Path, &Error))
+	if (!FPaths::ValidatePath(Path, &Error))
 	{
 		return false;
 	}
@@ -1265,29 +1288,29 @@ bool AVoxelWorld::SaveToFile(const FString& Path, FText& Error)
 	PlatformFile.CreateDirectoryTree(*FPaths::GetPath(Path));
 
 	FBufferArchive Archive(true);
-	
+
 	FVoxelCompressedWorldSave CompressedSave;
 	UVoxelDataTools::GetCompressedSave(this, CompressedSave);
 	CompressedSave.Serialize(Archive);
 
 	if (FFileHelper::SaveArrayToFile(Archive, *Path))
 	{
-		const FNotificationInfo Info(FText::Format(VOXEL_LOCTEXT("{0} was successfully created"), FText::FromString(Path)));
+		const FNotificationInfo Info(
+			FText::Format(VOXEL_LOCTEXT("{0} was successfully created"), FText::FromString(Path)));
 		FSlateNotificationManager::Get().AddNotification(Info);
 
 		if (CompressedSave.Objects.Num() > 0)
 		{
-			const FNotificationInfo OtherInfo(FText::Format(VOXEL_LOCTEXT("The voxel data has {0} placeable items (eg, data assets)! These will not be saved"), CompressedSave.Objects.Num()));
+			const FNotificationInfo OtherInfo(FText::Format(
+				VOXEL_LOCTEXT("The voxel data has {0} placeable items (eg, data assets)! These will not be saved"),
+				CompressedSave.Objects.Num()));
 			FSlateNotificationManager::Get().AddNotification(OtherInfo);
 		}
-		
+
 		return true;
 	}
-	else
-	{
-		Error = FText::Format(VOXEL_LOCTEXT("Error when creating {0}"), FText::FromString(Path));
-		return false;
-	}
+	Error = FText::Format(VOXEL_LOCTEXT("Error when creating {0}"), FText::FromString(Path));
+	return false;
 }
 
 bool AVoxelWorld::LoadFromFile(const FString& Path, FText& Error)
@@ -1387,7 +1410,7 @@ void AVoxelWorld::OnApplyObjectToActor(UObject* Object, AActor* Actor)
 	{
 		return;
 	}
-	
+
 	VoxelMaterial = Material;
 	MaterialConfig = EVoxelMaterialConfig::RGB;
 	RecreateRender();

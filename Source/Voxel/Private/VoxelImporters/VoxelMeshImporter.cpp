@@ -2,32 +2,36 @@
 
 #include "VoxelImporters/VoxelMeshImporter.h"
 
+#include "VoxelMessages.h"
 #include "VoxelAssets/VoxelDataAsset.h"
 #include "VoxelAssets/VoxelDataAssetData.inl"
-#include "VoxelUtilities/VoxelMathUtilities.h"
-#include "VoxelUtilities/VoxelExampleUtilities.h"
 #include "VoxelUtilities/VoxelDistanceFieldUtilities.h"
-#include "VoxelMessages.h"
+#include "VoxelUtilities/VoxelExampleUtilities.h"
+#include "VoxelUtilities/VoxelMathUtilities.h"
 
 
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/TextureRenderTarget2D.h"
+#include "Kismet/KismetRenderingLibrary.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInstanceDynamic.h"
-#include "Kismet/KismetRenderingLibrary.h"
 
 static void GetMergedSectionFromStaticMesh(
-	UStaticMesh* InMesh, 
-	int32 LODIndex, 
-	TArray<FVector>& Vertices, 
-	TArray<uint32>& Indices, 
+	UStaticMesh* InMesh,
+	int32 LODIndex,
+	TArray<FVector>& Vertices,
+	TArray<uint32>& Indices,
 	TArray<FVector2D>& UVs)
 {
 	VOXEL_FUNCTION_COUNTER();
-	
-	FStaticMeshRenderData* RenderData = UE_5_SWITCH(InMesh->RenderData.Get(), InMesh->GetRenderData());
-	if (!ensure(RenderData) || !ensure(RenderData->LODResources.IsValidIndex(LODIndex))) return;
+
+	FStaticMeshRenderData* RenderData = UE_5_SWITCH(
+		/*InMesh->RenderData.Get()*/ InMesh->GetRenderData(), InMesh->GetRenderData());
+	if (!ensure(RenderData) || !ensure(RenderData->LODResources.IsValidIndex(LODIndex)))
+	{
+		return;
+	}
 
 	const FStaticMeshLODResources& LODResources = RenderData->LODResources[LODIndex];
 	const FRawStaticIndexBuffer& IndexBuffer = LODResources.IndexBuffer;
@@ -37,15 +41,14 @@ static void GetMergedSectionFromStaticMesh(
 
 	ensure(IndexBuffer.GetNumIndices() % 3 == 0);
 
-	const auto Get = [](auto& Array, auto Index) -> auto&
-	{
+	const auto Get = [](auto& Array, auto Index) -> auto& {
 #if VOXEL_DEBUG
 		return Array[Index];
 #else
 		return Array.GetData()[Index];
 #endif
 	};
-	
+
 	if (!FPlatformProperties::RequiresCookedData() || InMesh->bAllowCPUAccess)
 	{
 		{
@@ -77,26 +80,27 @@ static void GetMergedSectionFromStaticMesh(
 	else
 	{
 		LOG_VOXEL(Log, TEXT("Extracting mesh data from GPU for %s"), *InMesh->GetName());
-		
+
 		ENQUEUE_RENDER_COMMAND(VoxelDistanceFieldCompute)([&](FRHICommandListImmediate& RHICmdList)
 		{
 			{
 				VOXEL_SCOPE_COUNTER("Copy Vertices from GPU");
 				Vertices.SetNumUninitialized(PositionVertexBuffer.GetNumVertices());
 				const int32 NumBytes = PositionVertexBuffer.GetNumVertices() * PositionVertexBuffer.GetStride();
-				
-				void* BufferData = RHICmdList.LockVertexBuffer(PositionVertexBuffer.VertexBufferRHI, 0, NumBytes, EResourceLockMode::RLM_ReadOnly);
+
+				void* BufferData = RHICmdList.LockVertexBuffer(PositionVertexBuffer.VertexBufferRHI, 0, NumBytes,
+				                                               RLM_ReadOnly);
 				FMemory::Memcpy(Vertices.GetData(), BufferData, NumBytes);
 				RHICmdList.UnlockVertexBuffer(PositionVertexBuffer.VertexBufferRHI);
 			}
 			{
 				VOXEL_SCOPE_COUNTER("Copy Triangles from GPU");
 				Indices.SetNumUninitialized(IndexBuffer.GetNumIndices());
-				
+
 				const bool bIs32Bit = IndexBuffer.Is32Bit();
 				const int32 NumBytes = IndexBuffer.GetNumIndices() * (bIs32Bit ? sizeof(uint32) : sizeof(uint16));
-				
-				void* BufferData = RHICmdList.LockIndexBuffer(IndexBuffer.IndexBufferRHI, 0, NumBytes, EResourceLockMode::RLM_ReadOnly);
+
+				void* BufferData = RHICmdList.LockIndexBuffer(IndexBuffer.IndexBufferRHI, 0, NumBytes, RLM_ReadOnly);
 				if (bIs32Bit)
 				{
 					FMemory::Memcpy(Indices.GetData(), BufferData, NumBytes);
@@ -119,9 +123,13 @@ static void GetMergedSectionFromStaticMesh(
 				UVs.SetNumUninitialized(StaticMeshVertexBuffer.GetNumVertices());
 
 				const bool bFullPrecision = StaticMeshVertexBuffer.GetUseFullPrecisionUVs();
-				const int32 NumBytes = StaticMeshVertexBuffer.GetNumVertices() * (bFullPrecision ? sizeof(FVector2D) : sizeof(FVector2DHalf));
-				
-				void* BufferData = RHICmdList.LockVertexBuffer(StaticMeshVertexBuffer.TexCoordVertexBuffer.VertexBufferRHI, 0, NumBytes, EResourceLockMode::RLM_ReadOnly);
+				const int32 NumBytes = StaticMeshVertexBuffer.GetNumVertices() * (bFullPrecision
+					? sizeof(FVector2D)
+					: sizeof(FVector2DHalf));
+
+				void* BufferData = RHICmdList.LockVertexBuffer(
+					StaticMeshVertexBuffer.TexCoordVertexBuffer.VertexBufferRHI, 0, NumBytes,
+					RLM_ReadOnly);
 				if (bFullPrecision)
 				{
 					FMemory::Memcpy(UVs.GetData(), BufferData, NumBytes);
@@ -139,7 +147,7 @@ static void GetMergedSectionFromStaticMesh(
 				RHICmdList.UnlockVertexBuffer(StaticMeshVertexBuffer.TexCoordVertexBuffer.VertexBufferRHI);
 			}
 		});
-		
+
 		FRenderCommandFence Fence;
 		Fence.BeginFence();
 		Fence.Wait();
@@ -152,8 +160,10 @@ static void GetMergedSectionFromStaticMesh(
 
 FVoxelMeshImporterSettings::FVoxelMeshImporterSettings()
 {
-	ColorsMaterial = FVoxelExampleUtilities::LoadExampleObject<UMaterialInterface>(TEXT("/Voxel/Examples/Importers/Chair/VoxelExample_M_Chair_Emissive_Color"));
-	UVsMaterial = FVoxelExampleUtilities::LoadExampleObject<UMaterialInterface>(TEXT("/Voxel/Examples/Importers/Chair/VoxelExample_M_Chair_Emissive_UVs"));
+	ColorsMaterial = FVoxelExampleUtilities::LoadExampleObject<UMaterialInterface>(
+		TEXT("/Voxel/Examples/Importers/Chair/VoxelExample_M_Chair_Emissive_Color"));
+	UVsMaterial = FVoxelExampleUtilities::LoadExampleObject<UMaterialInterface>(
+		TEXT("/Voxel/Examples/Importers/Chair/VoxelExample_M_Chair_Emissive_UVs"));
 }
 
 FVoxelMeshImporterSettings::FVoxelMeshImporterSettings(const FVoxelMeshImporterSettingsBase& Base)
@@ -171,14 +181,13 @@ void UVoxelMeshImporterLibrary::CreateMeshDataFromStaticMesh(UStaticMesh* Static
 	Data.Vertices.Reset();
 	Data.Triangles.Reset();
 	Data.UVs.Reset();
-	
-	const int32 LOD = 0;
+
+	constexpr int32 LOD = 0;
 	TArray<uint32> Indices;
 
 	GetMergedSectionFromStaticMesh(StaticMesh, LOD, Data.Vertices, Indices, Data.UVs);
-	
-	const auto Get = [](auto& Array, auto Index) -> auto&
-	{
+
+	const auto Get = [](auto& Array, auto Index) -> auto& {
 #if VOXEL_DEBUG
 		return Array[Index];
 #else
@@ -188,14 +197,14 @@ void UVoxelMeshImporterLibrary::CreateMeshDataFromStaticMesh(UStaticMesh* Static
 
 	for (uint32 Index : Indices)
 	{
-		if (Index >= uint32(Data.Vertices.Num()))
+		if (Index >= static_cast<uint32>(Data.Vertices.Num()))
 		{
 			FVoxelMessages::Error(FUNCTION_ERROR("Invalid index buffer"));
 			Data = {};
 			return;
 		}
 	}
-	
+
 	ensure(Indices.Num() % 3 == 0);
 	Data.Triangles.SetNumUninitialized(Indices.Num() / 3);
 	for (int32 Index = 0; Index < Data.Triangles.Num(); Index++)
@@ -241,7 +250,7 @@ void UVoxelMeshImporterLibrary::ConvertMeshToDistanceField(
 UVoxelMeshImporterInputData* UVoxelMeshImporterLibrary::CreateMeshDataFromStaticMesh(UStaticMesh* StaticMesh)
 {
 	VOXEL_FUNCTION_COUNTER();
-	
+
 	if (!StaticMesh)
 	{
 		FVoxelMessages::Error(FUNCTION_ERROR("Invalid StaticMesh"));
@@ -259,7 +268,7 @@ UTextureRenderTarget2D* UVoxelMeshImporterLibrary::CreateTextureFromMaterial(
 	int32 Height)
 {
 	VOXEL_FUNCTION_COUNTER();
-	
+
 	if (!WorldContextObject)
 	{
 		FVoxelMessages::Error(FUNCTION_ERROR("Invalid WorldContextObject"));
@@ -281,7 +290,9 @@ UTextureRenderTarget2D* UVoxelMeshImporterLibrary::CreateTextureFromMaterial(
 		return nullptr;
 	}
 
-	UTextureRenderTarget2D* RenderTarget2D = UKismetRenderingLibrary::CreateRenderTarget2D(WorldContextObject, Width, Height, ETextureRenderTargetFormat::RTF_RGBA8);
+	UTextureRenderTarget2D* RenderTarget2D = UKismetRenderingLibrary::CreateRenderTarget2D(
+		WorldContextObject, Width, Height,
+		RTF_RGBA8);
 	UKismetRenderingLibrary::DrawMaterialToRenderTarget(WorldContextObject, RenderTarget2D, Material);
 	return RenderTarget2D;
 }
@@ -300,16 +311,17 @@ void UVoxelMeshImporterLibrary::ConvertMeshToVoxels(
 }
 
 void UVoxelMeshImporterLibrary::ConvertMeshToVoxels_NoMaterials(
-	UObject* WorldContextObject, 
-	UVoxelMeshImporterInputData* Mesh, 
-	FTransform Transform, 
-	bool bSubtractive, 
-	FVoxelMeshImporterSettingsBase Settings, 
-	UVoxelDataAsset*& Asset, 
+	UObject* WorldContextObject,
+	UVoxelMeshImporterInputData* Mesh,
+	FTransform Transform,
+	bool bSubtractive,
+	FVoxelMeshImporterSettingsBase Settings,
+	UVoxelDataAsset*& Asset,
 	int32& NumLeaks)
 {
 	FVoxelMeshImporterRenderTargetCache RenderTargetCache;
-	ConvertMeshToVoxels(WorldContextObject, Mesh, Transform, bSubtractive, FVoxelMeshImporterSettings(Settings), RenderTargetCache, Asset, NumLeaks);
+	ConvertMeshToVoxels(WorldContextObject, Mesh, Transform, bSubtractive, FVoxelMeshImporterSettings(Settings),
+	                    RenderTargetCache, Asset, NumLeaks);
 
 	ensure(!RenderTargetCache.ColorsRenderTarget);
 	ensure(!RenderTargetCache.UVsRenderTarget);
@@ -326,7 +338,8 @@ AVoxelMeshImporter::AVoxelMeshImporter()
 #if WITH_EDITOR
 	MeshComponent = CreateDefaultSubobject<UStaticMeshComponent>("Mesh");
 
-	StaticMesh = FVoxelExampleUtilities::LoadExampleObject<UStaticMesh>(TEXT("/Voxel/Examples/Importers/Chair/VoxelExample_SM_Chair"));
+	StaticMesh = FVoxelExampleUtilities::LoadExampleObject<UStaticMesh>(
+		TEXT("/Voxel/Examples/Importers/Chair/VoxelExample_SM_Chair"));
 	MeshComponent->SetStaticMesh(StaticMesh);
 	MeshComponent->SetRelativeScale3D(FVector(100.f));
 	RootComponent = MeshComponent;
@@ -338,7 +351,7 @@ AVoxelMeshImporter::AVoxelMeshImporter()
 void AVoxelMeshImporter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-	
+
 	if (GetWorld()->WorldType != EWorldType::Editor)
 	{
 		Destroy();
@@ -381,7 +394,7 @@ void AVoxelMeshImporter::Tick(float DeltaSeconds)
 void AVoxelMeshImporter::PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent)
 {
 	Super::PostEditChangeProperty(PropertyChangedEvent);
-	
+
 	MeshComponent->SetStaticMesh(StaticMesh);
 	InitMaterialInstance();
 	MaterialInstance->SetScalarParameterValue("VoxelSize", Settings.VoxelSize);
@@ -395,7 +408,8 @@ void AVoxelMeshImporter::InitMaterialInstance()
 	{
 		return;
 	}
-	auto* Material = LoadObject<UMaterial>(nullptr, TEXT("Material'/Voxel/MaterialHelpers/MeshImporterMaterial.MeshImporterMaterial'"));
+	auto* Material = LoadObject<UMaterial>(
+		nullptr, TEXT("Material'/Voxel/MaterialHelpers/MeshImporterMaterial.MeshImporterMaterial'"));
 	MaterialInstance = UMaterialInstanceDynamic::Create(Material, GetTransientPackage());
 	MeshComponent->SetMaterial(0, MaterialInstance);
 	MaterialInstance->SetScalarParameterValue("VoxelSize", Settings.VoxelSize); // To have it on start
@@ -409,5 +423,6 @@ void AVoxelMeshImporter::UpdateSizes()
 	SizeZ = FMath::CeilToInt(SizeFloat.Z);
 	NumberOfVoxels = SizeX * SizeY * SizeZ;
 	const bool bHasMaterials = Settings.bImportColors || Settings.bImportUVs;
-	SizeInMB = double(NumberOfVoxels) * ((ONE_BIT_VOXEL_VALUE ? 1 / 8. : sizeof(FVoxelValue)) + (bHasMaterials ? sizeof(FVoxelMaterial) : 0)) / double(1 << 20);
+	SizeInMB = static_cast<double>(NumberOfVoxels) * ((ONE_BIT_VOXEL_VALUE ? 1 / 8. : sizeof(FVoxelValue)) + (
+		bHasMaterials ? sizeof(FVoxelMaterial) : 0)) / static_cast<double>(1 << 20);
 }

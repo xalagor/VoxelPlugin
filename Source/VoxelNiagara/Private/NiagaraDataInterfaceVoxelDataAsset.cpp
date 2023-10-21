@@ -3,11 +3,12 @@
 #include "NiagaraDataInterfaceVoxelDataAsset.h"
 #include "NiagaraShader.h"
 #include "ShaderParameterUtils.h"
+#include "VoxelMinimal.h"
 #include "VoxelAssets/VoxelDataAsset.h"
 #include "VoxelAssets/VoxelDataAssetData.inl"
-#include "VoxelMinimal.h"
 
-bool FNDIVoxelDataAsset_InstanceData::Init(UNiagaraDataInterfaceVoxelDataAsset* Interface, FNiagaraSystemInstance* SystemInstance)
+bool FNDIVoxelDataAsset_InstanceData::Init(UNiagaraDataInterfaceVoxelDataAsset* Interface,
+                                           FNiagaraSystemInstance* SystemInstance)
 {
 	if (Interface->Asset)
 	{
@@ -30,10 +31,7 @@ bool FNDIVoxelDataAsset_InstanceData::Init(UNiagaraDataInterfaceVoxelDataAsset* 
 
 		return true;
 	}
-	else
-	{
-		return false;
-	}
+	return false;
 }
 
 const FName UNiagaraDataInterfaceVoxelDataAsset::GetAssetValueName(TEXT("GetVoxelDataAssetValue"));
@@ -47,19 +45,23 @@ void UNiagaraDataInterfaceVoxelDataAsset::PostInitProperties()
 
 	if (HasAnyFlags(RF_ClassDefaultObject))
 	{
-		FNiagaraTypeRegistry::Register(FNiagaraTypeDefinition(GetClass()), true, false, false);
+		//FNiagaraTypeRegistry::Register(FNiagaraTypeDefinition(GetClass()), true, false, false);
+		constexpr ENiagaraTypeRegistryFlags Flags = ENiagaraTypeRegistryFlags::AllowParameter;
+		FNiagaraTypeRegistry::Register(FNiagaraTypeDefinition(GetClass()), Flags);
 	}
 }
 
-bool UNiagaraDataInterfaceVoxelDataAsset::InitPerInstanceData(void* PerInstanceData, FNiagaraSystemInstance* SystemInstance)
+bool UNiagaraDataInterfaceVoxelDataAsset::InitPerInstanceData(void* PerInstanceData,
+                                                              FNiagaraSystemInstance* SystemInstance)
 {
-	FNDIVoxelDataAsset_InstanceData* Inst = new (PerInstanceData) FNDIVoxelDataAsset_InstanceData();
+	FNDIVoxelDataAsset_InstanceData* Inst = new(PerInstanceData) FNDIVoxelDataAsset_InstanceData();
 	return Inst->Init(this, SystemInstance);
 }
 
-void UNiagaraDataInterfaceVoxelDataAsset::DestroyPerInstanceData(void* PerInstanceData, FNiagaraSystemInstance* SystemInstance)
+void UNiagaraDataInterfaceVoxelDataAsset::DestroyPerInstanceData(void* PerInstanceData,
+                                                                 FNiagaraSystemInstance* SystemInstance)
 {
-	FNDIVoxelDataAsset_InstanceData* Inst = (FNDIVoxelDataAsset_InstanceData*)PerInstanceData;
+	FNDIVoxelDataAsset_InstanceData* Inst = static_cast<FNDIVoxelDataAsset_InstanceData*>(PerInstanceData);
 	Inst->~FNDIVoxelDataAsset_InstanceData();
 }
 
@@ -69,7 +71,8 @@ bool UNiagaraDataInterfaceVoxelDataAsset::CopyToInternal(UNiagaraDataInterface* 
 	{
 		return false;
 	}
-	UNiagaraDataInterfaceVoxelDataAsset* DestinationTexture = CastChecked<UNiagaraDataInterfaceVoxelDataAsset>(Destination);
+	UNiagaraDataInterfaceVoxelDataAsset* DestinationTexture = CastChecked<
+		UNiagaraDataInterfaceVoxelDataAsset>(Destination);
 	DestinationTexture->Asset = Asset;
 
 	return true;
@@ -81,7 +84,8 @@ bool UNiagaraDataInterfaceVoxelDataAsset::Equals(const UNiagaraDataInterface* Ot
 	{
 		return false;
 	}
-	const UNiagaraDataInterfaceVoxelDataAsset* OtherTexture = CastChecked<const UNiagaraDataInterfaceVoxelDataAsset>(Other);
+	const UNiagaraDataInterfaceVoxelDataAsset* OtherTexture = CastChecked<const
+		UNiagaraDataInterfaceVoxelDataAsset>(Other);
 	return OtherTexture->Asset == Asset;
 }
 
@@ -141,9 +145,10 @@ void UNiagaraDataInterfaceVoxelDataAsset::GetFunctions(TArray<FNiagaraFunctionSi
 	}
 }
 
-void UNiagaraDataInterfaceVoxelDataAsset::GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction &OutFunc)
+void UNiagaraDataInterfaceVoxelDataAsset::GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo,
+                                                                void* InstanceData, FVMExternalFunction& OutFunc)
 {
-	FNDIVoxelDataAsset_InstanceData* InstData = (FNDIVoxelDataAsset_InstanceData*)InstanceData;
+	FNDIVoxelDataAsset_InstanceData* InstData = static_cast<FNDIVoxelDataAsset_InstanceData*>(InstanceData);
 	if (!InstData || !InstData->Data.IsValid())
 	{
 		OutFunc = FVMExternalFunction();
@@ -171,7 +176,8 @@ void UNiagaraDataInterfaceVoxelDataAsset::GetVMExternalFunction(const FVMExterna
 	}
 }
 
-void UNiagaraDataInterfaceVoxelDataAsset::GetAssetValue(UE_5_SWITCH(FVectorVMContext, FVectorVMExternalFunctionContext)& Context)
+void UNiagaraDataInterfaceVoxelDataAsset::GetAssetValue(
+	UE_5_SWITCH(FVectorVMContext, FVectorVMExternalFunctionContext)& Context)
 {
 	VectorVM::FUserPtrHandler<FNDIVoxelDataAsset_InstanceData> InstData(Context);
 	VectorVM::FExternalFuncInputHandler<float> XParam(Context);
@@ -189,7 +195,8 @@ void UNiagaraDataInterfaceVoxelDataAsset::GetAssetValue(UE_5_SWITCH(FVectorVMCon
 	}
 }
 
-void UNiagaraDataInterfaceVoxelDataAsset::GetAssetColor(UE_5_SWITCH(FVectorVMContext, FVectorVMExternalFunctionContext)& Context)
+void UNiagaraDataInterfaceVoxelDataAsset::GetAssetColor(
+	UE_5_SWITCH(FVectorVMContext, FVectorVMExternalFunctionContext)& Context)
 {
 	VectorVM::FUserPtrHandler<FNDIVoxelDataAsset_InstanceData> InstData(Context);
 	VectorVM::FExternalFuncInputHandler<float> XParam(Context);
@@ -214,7 +221,8 @@ void UNiagaraDataInterfaceVoxelDataAsset::GetAssetColor(UE_5_SWITCH(FVectorVMCon
 	}
 }
 
-void UNiagaraDataInterfaceVoxelDataAsset::GetPositionFromAsset(UE_5_SWITCH(FVectorVMContext, FVectorVMExternalFunctionContext)& Context)
+void UNiagaraDataInterfaceVoxelDataAsset::GetPositionFromAsset(
+	UE_5_SWITCH(FVectorVMContext, FVectorVMExternalFunctionContext)& Context)
 {
 	VectorVM::FUserPtrHandler<FNDIVoxelDataAsset_InstanceData> InstData(Context);
 	VectorVM::FExternalFuncInputHandler<int32> IndexParam(Context);
@@ -237,7 +245,8 @@ void UNiagaraDataInterfaceVoxelDataAsset::GetPositionFromAsset(UE_5_SWITCH(FVect
 	}
 }
 
-void UNiagaraDataInterfaceVoxelDataAsset::GetNumVoxels(UE_5_SWITCH(FVectorVMContext, FVectorVMExternalFunctionContext)& Context)
+void UNiagaraDataInterfaceVoxelDataAsset::GetNumVoxels(
+	UE_5_SWITCH(FVectorVMContext, FVectorVMExternalFunctionContext)& Context)
 {
 	VectorVM::FUserPtrHandler<FNDIVoxelDataAsset_InstanceData> InstData(Context);
 	VectorVM::FExternalFuncRegisterHandler<int32> OutNum(Context);
